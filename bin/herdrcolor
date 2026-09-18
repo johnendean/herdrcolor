@@ -1,0 +1,9 @@
+#!/bin/sh
+# Run herdrcolor from a checkout or an installed plugin, with no venv and no
+# install step: there are no third-party dependencies, so the system python3 is
+# enough. Herdr runs this from its startup and event hooks.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec python3 -m herdrcolor "$@"

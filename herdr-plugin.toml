@@ -1,0 +1,40 @@
+id = "herdrcolor"
+name = "herdrcolor"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Give each Herdr agent its own colour in the sidebar"
+platforms = ["macos", "linux"]
+
+# Nothing to compile -- no third-party dependencies -- so install just colours
+# whatever is already running. Startup hooks do not fire until Herdr next
+# starts, and waiting until then to show anything would look like a broken
+# install.
+[[build]]
+command = ["./bin/herdrcolor", "sync"]
+
+# Reported metadata does not survive a server restart, so every start re-reports
+# it. One shot, no daemon: `sync` asks Herdr what exists, reports, and exits.
+[[startup]]
+command = ["./bin/herdrcolor", "sync"]
+
+# The whole event-driven half of the plugin. A new agent is the only thing that
+# can need a colour it does not have, and `sync` re-reports every pane rather
+# than just the new one -- which costs one request per agent and means a missed
+# or replayed event cannot leave anything stale.
+[[events]]
+on = "pane.agent_detected"
+command = ["./bin/herdrcolor", "sync"]
+
+[[actions]]
+id = "sync"
+title = "herdrcolor: recolour agents"
+description = "Re-report every agent's colour now"
+contexts = ["global"]
+command = ["./bin/herdrcolor", "sync", "--verbose"]
+
+[[actions]]
+id = "doctor"
+title = "herdrcolor: check setup"
+description = "Report on Herdr, the sidebar config, and the colours"
+contexts = ["global"]
+command = ["./bin/herdrcolor", "doctor"]

@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+src/*.egg-info/
+
+# Session notes, not documentation of the tool: kept local.
+RECAP.md
