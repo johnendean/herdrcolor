@@ -25,3 +25,31 @@ def test_a_flag_given_early_survives_the_subparser():
 def test_flags_on_both_sides_do_not_cancel_out():
     command, verbose, socket = parse(["--socket", "/tmp/x.sock", "list", "--verbose"])
     assert (command, verbose, socket) == ("list", True, "/tmp/x.sock")
+
+
+SNIPPET = """
+[ui.sidebar.agents]
+rows = [["state_icon", { token = "$c1", fg = "#f38ba8", bold = true },
+         { token = "$c2", fg = "#fab387" }]]
+
+[ui.sidebar.spaces]
+rows = [["state_icon", { token = "$c1", fg = "#f38ba8" }]]
+"""
+
+
+def test_declared_slots_reads_each_section_separately():
+    # Grepping the file could not tell these apart: both sections name `$c1`.
+    found = cli.declared_slots(SNIPPET)
+    assert found["agents"] == {1, 2}
+    assert found["spaces"] == {1}
+
+
+def test_declared_slots_survives_a_broken_config():
+    assert cli.declared_slots("rows = [[[") == {"agents": set(), "spaces": set()}
+
+
+def test_declared_slots_on_a_config_with_no_sidebar_config():
+    assert cli.declared_slots('[theme]\nname = "catppuccin"') == {
+        "agents": set(),
+        "spaces": set(),
+    }

@@ -75,6 +75,32 @@ def agents(path: Path, *, timeout: float = 5.0) -> list[dict[str, Any]]:
     return request(path, "agent.list", timeout=timeout).get("agents") or []
 
 
+def workspaces(path: Path, *, timeout: float = 5.0) -> list[dict[str, Any]]:
+    """Every space, with the label the spaces panel shows.
+
+    No directory comes back, which is why a space without agents is coloured by
+    its label. See `assign.plan`.
+    """
+    return request(path, "workspace.list", timeout=timeout).get("workspaces") or []
+
+
+def report_workspace_tokens(
+    path: Path,
+    workspace_id: str,
+    tokens: dict[str, str | None],
+    *,
+    source: str,
+    timeout: float = 5.0,
+) -> None:
+    """The same slot trick, on a space instead of a pane."""
+    request(
+        path,
+        "workspace.report_metadata",
+        {"workspace_id": workspace_id, "source": source, "tokens": tokens},
+        timeout=timeout,
+    )
+
+
 def report_tokens(
     path: Path,
     pane_id: str,

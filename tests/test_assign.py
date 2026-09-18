@@ -102,3 +102,63 @@ def test_more_projects_than_slots_still_assigns_every_one():
     projects = {f"project-{n}" for n in range(20)}
     colours = assign.resolve(projects)
     assert set(colours) == projects
+
+
+def space(workspace_id, label):
+    return {"workspace_id": workspace_id, "label": label}
+
+
+def test_a_space_takes_the_colour_of_the_agents_inside_it():
+    plan = assign.plan(
+        [agent("w6:p1", "/src/api-server")], [space("w6", "api-server")]
+    )
+    assert plan.spaces[0].colour == plan.panes[0].colour
+
+
+def test_a_space_keeps_its_colour_when_its_agent_sits_in_a_subdirectory():
+    # The pane is coloured for `docs`, the space for `api-server`, and the two
+    # deliberately differ -- but the space still inherits the pane's colour so
+    # the two panels agree on screen.
+    plan = assign.plan(
+        [agent("w6:p1", "/src/api-server/docs")], [space("w6", "api-server")]
+    )
+    assert plan.panes[0].project == "docs"
+    assert plan.spaces[0].colour == plan.panes[0].colour
+
+
+def test_a_space_with_no_agents_is_coloured_by_its_label():
+    plan = assign.plan([], [space("w9", "infra")])
+    assert plan.spaces[0].colour == palette.colour_for("infra")
+
+
+def test_an_empty_space_does_not_steal_an_agents_colour():
+    # Both hash to the same slot; the sidebar must still show two colours.
+    plan = assign.plan(
+        [agent("w1:p1", "/src/project-2")], [space("w9", "project-5")]
+    )
+    assert plan.panes[0].colour != plan.spaces[0].colour
+
+
+def test_space_colour_does_not_depend_on_pane_order():
+    panes = [agent("w6:p2", "/src/dashboard"), agent("w6:p1", "/src/api-server")]
+    forward = assign.plan(panes, [space("w6", "api-server")])
+    backward = assign.plan(list(reversed(panes)), [space("w6", "api-server")])
+    assert forward.spaces[0].colour == backward.spaces[0].colour
+
+
+def test_spaces_without_a_label_are_skipped():
+    plan = assign.plan([], [{"workspace_id": "w9"}, space("wA", "infra")])
+    assert [s.workspace_id for s in plan.spaces] == ["wA"]
+
+
+def test_workspace_of_reads_the_pane_id_prefix():
+    assert assign.workspace_of("w6:p1") == "w6"
+    assert assign.workspace_of("wB:p12") == "wB"
+
+
+def test_space_tokens_carry_the_label():
+    plan = assign.plan([], [space("w9", "infra")])
+    tokens = assign.tokens_for(plan.spaces[0])
+    slot = palette.slot_token(plan.spaces[0].colour.slot)
+    assert tokens[slot] == "infra"
+    assert tokens[palette.COLOUR_TOKEN] == plan.spaces[0].colour.hex
