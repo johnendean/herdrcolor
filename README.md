@@ -1,5 +1,7 @@
 # herdrcolor
 
+[![CI](https://github.com/johnendean/herdrcolor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/johnendean/herdrcolor/actions/workflows/ci.yml?query=branch%3Amain)
+
 Give each [Herdr](https://herdr.dev) agent its own colour in the sidebar.
 
 Agents that all report as `claude` look alike in the agents pane. herdrcolor
@@ -123,6 +125,12 @@ synced" from "synced, config not applied".
 make venv    # only needed for the tests
 make test
 ```
+
+CI runs the suite on macOS and Linux across Python 3.11 and 3.14, imports every
+module with nothing installed (the shipped path is a bare `python3` with
+`PYTHONPATH`, since Herdr runs `bin/herdrcolor` straight from its hooks), and
+parses the generated `snippet` output as TOML. `main` is protected on the
+`build` job, which gates all three.
 
 The tests need no running Herdr: everything that decides a colour is a pure
 function in `assign.py` and `palette.py`.
