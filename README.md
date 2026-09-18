@@ -3,23 +3,25 @@
 Give each [Herdr](https://herdr.dev) agent its own colour in the sidebar.
 
 Agents that all report as `claude` look alike in the agents pane. herdrcolor
-gives every project a colour, so a glance tells you which pane is which.
+gives every project a colour, in both the agents and the spaces panels, so a
+glance tells you which pane is which.
 
 ```
-PANE   PROJECT     SLOT  COLOUR         REPORTED
+ROW    NAME        SLOT  COLOUR         REPORTED
 w1:p1  api-server  $c4   #89b4fa blue   #89b4fa
 w2:p1  dashboard   $c3   #a6e3a1 green  #a6e3a1
 w3:p1  firmware    $c2   #fab387 peach  #fab387
 w4:p1  herdrcolor  $c1   #f38ba8 red    #f38ba8
-w5:p1  infra       $c5   #cba6f7 mauve  #cba6f7
+w1     api-server  $c4   #89b4fa blue   #89b4fa
+w2     dashboard   $c3   #a6e3a1 green  #a6e3a1
 ```
 
 ## Install
 
 ```sh
 herdr plugin link "$PWD"     # or: make link
-./bin/herdrcolor snippet     # print the config block
-# paste it into ~/.config/herdr/config.toml
+./bin/herdrcolor snippet     # print the two config blocks
+# paste them into ~/.config/herdr/config.toml
 herdr server reload-config
 ./bin/herdrcolor sync
 ```
@@ -33,8 +35,8 @@ Herdr's sidebar can colour a token, and it can colour one conditionally on
 is no way to say "colour the workspace name according to `$color`".
 
 herdrcolor works round it by making the colour a question of *which* token holds
-the text. The config declares six tokens, `$c1` to `$c6`, each with a fixed
-colour. The plugin puts the project's name in exactly one of them and clears the
+the text. Each sidebar section declares six tokens, `$c1` to `$c6`, each with a
+fixed colour. The plugin puts the name in exactly one of them and clears the
 other five. The sidebar renders whichever one has text, in that slot's colour,
 and the config never changes when a new project appears.
 
@@ -42,8 +44,9 @@ This rests on empty tokens rendering as nothing, which is not documented
 anywhere. Checked against a live 0.9.0 sidebar: five empty slots cost no
 separator, no padding and no width — a row reads `○ herdrkeys · 1` either way.
 
-Colours are published with `pane.report_metadata`, one request per pane,
-carrying the whole slot set at once. The plugin also publishes `$color`, the
+Colours are published with `pane.report_metadata` for agents and
+`workspace.report_metadata` for spaces, one request per row, carrying the whole
+slot set at once. The plugin also publishes `$color`, the
 assigned hex, which nothing in the sidebar uses — it is there for tools that
 draw their own pixels, [herdrkeys](https://github.com/johnendean/herdrkeys)
 being the reason it exists.
@@ -57,8 +60,8 @@ from three places:
 | `[[startup]]` — on server start  | reported metadata does not survive a restart        |
 | `[[events]]` — `pane.agent_detected` | a new agent is the only thing that can lack a colour |
 
-Every run re-reports every pane, so a missed or replayed event cannot leave
-anything stale. `agent.list` is a question, not a feed: the event decides *when*
+Every run re-reports every pane and space, so a missed or replayed event cannot
+leave anything stale. `agent.list` is a question, not a feed: the event decides *when*
 to ask, never what the answer is.
 
 ## Which colour a project gets
@@ -76,13 +79,20 @@ later one walks forward to the next free slot. Projects are considered in name
 order, so the same set of agents always produces the same colours however they
 started.
 
+A space takes the colour of the agents inside it, which is the point of
+colouring the spaces panel at all: the two halves of the sidebar have to agree.
+The workspace a pane belongs to comes from its ID — `w6:p1` is in `w6` — since
+`workspace.list` reports neither a directory nor its pane IDs. A space with no
+agents falls back to hashing its **label**, for the same reason: Herdr reports
+no directory for a workspace, so a renamed space can change colour.
+
 ## Commands
 
 | Command                  | What it does                                        |
 | ------------------------ | --------------------------------------------------- |
-| `herdrcolor sync`        | colour every agent now; idempotent                  |
+| `herdrcolor sync`        | colour every agent and space now; idempotent        |
 | `herdrcolor list`        | assigned colours beside reported ones               |
-| `herdrcolor snippet`     | print the config block, generated from the palette  |
+| `herdrcolor snippet`     | print both config blocks, generated from the palette |
 | `herdrcolor doctor`      | check Herdr, the config, and the colours            |
 | `herdrcolor clear`       | remove the tokens this plugin set, and nothing else |
 
@@ -103,6 +113,8 @@ synced" from "synced, config not applied".
   subdirectory is that subdirectory's project.
 - **Agents in one project share a colour.** The colour names the project. Two
   agents in the same repository are not told apart by it.
+- **A renamed space can change colour**, but only a space with no agents in
+  it: one with agents inherits their colour, which is keyed on the directory.
 - **Sidebar only.** Pane borders and the tab bar are unaffected.
 
 ## Development

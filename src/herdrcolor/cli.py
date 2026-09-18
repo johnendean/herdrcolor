@@ -9,9 +9,14 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tomllib
 from pathlib import Path
 
 from . import assign, herdr, palette
+
+# The two sidebar sections this plugin colours, and the config table each one is
+# configured under.
+SECTIONS = {"agents": "ui.sidebar.agents", "spaces": "ui.sidebar.spaces"}
 
 
 def _socket_path(args: argparse.Namespace) -> Path:
@@ -25,39 +30,64 @@ def _config_path() -> Path:
     return Path.home() / ".config" / "herdr" / "config.toml"
 
 
+def _plan(path: Path) -> assign.Plan:
+    return assign.plan(herdr.agents(path), herdr.workspaces(path))
+
+
 def cmd_sync(args: argparse.Namespace) -> int:
-    """Give every agent pane the colour its project hashes to.
+    """Give every agent and space the colour its project hashes to.
 
     Idempotent, and cheap enough to be: reporting the same tokens again costs
-    one request per pane and changes nothing on screen. That is what makes it
+    one request per row and changes nothing on screen. That is what makes it
     safe to run from an event hook, a startup hook and a human, and why nothing
     here tries to remember what it last reported.
     """
     path = _socket_path(args)
-    agents = herdr.agents(path)
-    done = 0
-    for assignment in assign.assignments(agents):
+    plan = _plan(path)
+
+    for assignment in plan.panes:
         herdr.report_tokens(
             path,
             assignment.pane_id,
             assign.tokens_for(assignment),
             source=palette.SOURCE,
         )
-        done += 1
         if args.verbose:
             print(
                 f"{assignment.pane_id}  {assignment.project}  "
                 f"${palette.slot_token(assignment.colour.slot)}  "
                 f"{assignment.colour.hex}  {assignment.colour.name}"
             )
-    skipped = len(agents) - done
-    note = f", {skipped} without a directory" if skipped else ""
-    print(f"herdrcolor: coloured {done} agent{'' if done == 1 else 's'}{note}")
+    for space in plan.spaces:
+        herdr.report_workspace_tokens(
+            path,
+            space.workspace_id,
+            assign.tokens_for(space),
+            source=palette.SOURCE,
+        )
+        if args.verbose:
+            print(
+                f"{space.workspace_id}  {space.label}  "
+                f"${palette.slot_token(space.colour.slot)}  "
+                f"{space.colour.hex}  {space.colour.name}"
+            )
+
+    print(
+        f"herdrcolor: coloured {len(plan.panes)} agent"
+        f"{'' if len(plan.panes) == 1 else 's'} and "
+        f"{len(plan.spaces)} space{'' if len(plan.spaces) == 1 else 's'}"
+    )
     return 0
 
 
+def _table(rows: list[tuple[str, ...]]) -> None:
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    for row in rows:
+        print("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)).rstrip())
+
+
 def cmd_list(args: argparse.Namespace) -> int:
-    """What each agent is wearing, and what it should be wearing.
+    """What each row is wearing, and what it should be wearing.
 
     The two can differ -- after a palette change, or a server restart that
     dropped reported metadata before any hook ran again -- and seeing both is
@@ -65,51 +95,87 @@ def cmd_list(args: argparse.Namespace) -> int:
     """
     path = _socket_path(args)
     agents = herdr.agents(path)
-    by_pane = {agent.get("pane_id"): agent for agent in agents}
-    rows = [("PANE", "PROJECT", "SLOT", "COLOUR", "REPORTED")]
-    for assignment in assign.assignments(agents):
-        reported = (by_pane.get(assignment.pane_id) or {}).get("tokens") or {}
-        live = reported.get(palette.COLOUR_TOKEN) or "-"
+    spaces = herdr.workspaces(path)
+    plan = assign.plan(agents, spaces)
+
+    live_panes = {
+        agent.get("pane_id"): (agent.get("tokens") or {}).get(palette.COLOUR_TOKEN)
+        for agent in agents
+    }
+    live_spaces = {
+        space.get("workspace_id"): (space.get("tokens") or {}).get(
+            palette.COLOUR_TOKEN
+        )
+        for space in spaces
+    }
+
+    rows: list[tuple[str, ...]] = [("ROW", "NAME", "SLOT", "COLOUR", "REPORTED")]
+    for assignment in plan.panes:
         rows.append(
             (
                 assignment.pane_id,
                 assignment.project,
                 f"${palette.slot_token(assignment.colour.slot)}",
                 f"{assignment.colour.hex} {assignment.colour.name}",
-                live,
+                live_panes.get(assignment.pane_id) or "-",
             )
         )
+    for space in plan.spaces:
+        rows.append(
+            (
+                space.workspace_id,
+                space.label,
+                f"${palette.slot_token(space.colour.slot)}",
+                f"{space.colour.hex} {space.colour.name}",
+                live_spaces.get(space.workspace_id) or "-",
+            )
+        )
+
     if len(rows) == 1:
-        print("herdrcolor: no agents with a directory")
+        print("herdrcolor: nothing to colour")
         return 0
-    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
-    for row in rows:
-        print("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)).rstrip())
+    _table(rows)
     return 0
 
 
 SNIPPET_HEADER = """\
-# herdrcolor: six colour slots for the agent rows. Paste into
+# herdrcolor: six colour slots per sidebar section. Paste into
 # ~/.config/herdr/config.toml, then run `herdr server reload-config`.
 #
 # Exactly one slot ever holds text, so exactly one colour shows. herdrcolor
-# decides which; this block only says what each slot looks like."""
+# decides which; this block only says what each slot looks like. The other five
+# slots cost nothing: an empty token renders as no text, no separator and no
+# padding."""
+
+
+def _slot_lines(indent: str) -> list[str]:
+    return [
+        f'{indent}{{ token = "${palette.slot_token(colour.slot)}", '
+        f'fg = "{colour.hex}", bold = true }},  # {colour.name}'
+        for colour in palette.PALETTE
+    ]
 
 
 def cmd_snippet(args: argparse.Namespace) -> int:
     """Print the config block, generated from the palette so the two agree."""
     print(SNIPPET_HEADER)
-    print("[ui.sidebar.agents]")
+    print()
+    print(f"[{SECTIONS['agents']}]")
     print("rows = [")
     print('  ["state_icon", "machine",')
-    for colour in palette.PALETTE:
-        token = palette.slot_token(colour.slot)
-        print(
-            f'    {{ token = "${token}", fg = "{colour.hex}" }},'
-            f"  # {colour.name}"
-        )
+    for line in _slot_lines("    "):
+        print(line)
     print('    "tab"],')
     print('  ["agent"],')
+    print("]")
+    print()
+    print(f"[{SECTIONS['spaces']}]")
+    print("rows = [")
+    print('  ["state_icon",')
+    for line in _slot_lines("    "):
+        print(line)
+    print("  ],")
+    print('  ["branch", "git_status"],')
     print("]")
     return 0
 
@@ -117,18 +183,54 @@ def cmd_snippet(args: argparse.Namespace) -> int:
 def cmd_clear(args: argparse.Namespace) -> int:
     """Remove every token this plugin set, leaving other sources alone."""
     path = _socket_path(args)
-    agents = herdr.agents(path)
-    cleared = 0
-    for agent in agents:
+    panes = cleared = 0
+    for agent in herdr.agents(path):
         pane_id = agent.get("pane_id")
         if not pane_id:
             continue
         herdr.report_tokens(
             path, pane_id, assign.cleared_tokens(), source=palette.SOURCE
         )
+        panes += 1
+    for space in herdr.workspaces(path):
+        workspace_id = space.get("workspace_id")
+        if not workspace_id:
+            continue
+        herdr.report_workspace_tokens(
+            path, workspace_id, assign.cleared_tokens(), source=palette.SOURCE
+        )
         cleared += 1
-    print(f"herdrcolor: cleared {cleared} pane{'' if cleared == 1 else 's'}")
+    print(f"herdrcolor: cleared {panes} pane(s) and {cleared} space(s)")
     return 0
+
+
+def declared_slots(config_text: str) -> dict[str, set[int]]:
+    """Which slots each sidebar section declares, per the config file.
+
+    Parsed rather than grepped: both sections declare the same six token names,
+    so counting `$c1` in the file cannot tell a half-configured sidebar from a
+    fully configured one -- which is the failure `doctor` exists to catch.
+    """
+    try:
+        config = tomllib.loads(config_text)
+    except tomllib.TOMLDecodeError:
+        return {name: set() for name in SECTIONS}
+
+    found: dict[str, set[int]] = {}
+    for name, table in SECTIONS.items():
+        node: object = config
+        for key in table.split("."):
+            node = node.get(key, {}) if isinstance(node, dict) else {}
+        rows = node.get("rows", []) if isinstance(node, dict) else []
+        slots: set[int] = set()
+        for row in rows if isinstance(rows, list) else []:
+            for token in row if isinstance(row, list) else []:
+                name_of = token.get("token") if isinstance(token, dict) else token
+                for colour in palette.PALETTE:
+                    if name_of == f"${palette.slot_token(colour.slot)}":
+                        slots.add(colour.slot)
+        found[name] = slots
+    return found
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -137,53 +239,68 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ok = True
 
     try:
-        agents = herdr.agents(path)
+        plan = _plan(path)
     except herdr.HerdrError as exc:
         print(f"herdr:    unreachable -- {exc}")
         return 1
-    print(f"herdr:    ok, {len(agents)} agent(s) at {path}")
+    print(
+        f"herdr:    ok, {len(plan.panes)} agent(s) and {len(plan.spaces)} space(s) "
+        f"at {path}"
+    )
 
     config = _config_path()
-    text = config.read_text() if config.exists() else ""
-    declared = [
-        palette.slot_token(colour.slot)
-        for colour in palette.PALETTE
-        if f'"${palette.slot_token(colour.slot)}"' in text
-    ]
-    if len(declared) == len(palette.PALETTE):
-        print(f"config:   ok, all {len(declared)} slots declared in {config}")
-    elif declared:
-        print(
-            f"config:   partial -- {len(declared)} of {len(palette.PALETTE)} slots "
-            f"in {config}; run `herdrcolor snippet`"
-        )
-        ok = False
-    else:
-        print(f"config:   no slots declared in {config}; run `herdrcolor snippet`")
-        ok = False
+    slots = declared_slots(config.read_text() if config.exists() else "")
+    for section, table in SECTIONS.items():
+        declared = slots[section]
+        if len(declared) == len(palette.PALETTE):
+            print(f"config:   ok, [{table}] declares all {len(declared)} slots")
+        elif declared:
+            print(
+                f"config:   [{table}] declares {len(declared)} of "
+                f"{len(palette.PALETTE)} slots; run `herdrcolor snippet`"
+            )
+            ok = False
+        else:
+            print(f"config:   [{table}] declares no slots; run `herdrcolor snippet`")
+            ok = False
 
-    wanted = assign.assignments(agents)
-    by_pane = {agent.get("pane_id"): agent for agent in agents}
-    stale = [
-        assignment.pane_id
-        for assignment in wanted
-        if ((by_pane.get(assignment.pane_id) or {}).get("tokens") or {}).get(
-            palette.COLOUR_TOKEN
-        )
-        != assignment.colour.hex
-    ]
-    if not wanted:
+    stale = _stale(path, plan)
+    total = len(plan.panes) + len(plan.spaces)
+    if not total:
         print("colours:  nothing to colour")
     elif stale:
         print(
-            f"colours:  {len(stale)} of {len(wanted)} not reported "
+            f"colours:  {len(stale)} of {total} not reported "
             f"({', '.join(stale)}); run `herdrcolor sync`"
         )
         ok = False
     else:
-        print(f"colours:  ok, {len(wanted)} agent(s) carry their colour")
+        print(f"colours:  ok, {total} row(s) carry their colour")
 
     return 0 if ok else 1
+
+
+def _stale(path: Path, plan: assign.Plan) -> list[str]:
+    """Rows whose reported colour is missing or not the one they should have."""
+    reported = {
+        agent.get("pane_id"): (agent.get("tokens") or {}).get(palette.COLOUR_TOKEN)
+        for agent in herdr.agents(path)
+    }
+    reported.update(
+        {
+            space.get("workspace_id"): (space.get("tokens") or {}).get(
+                palette.COLOUR_TOKEN
+            )
+            for space in herdr.workspaces(path)
+        }
+    )
+    stale = [a.pane_id for a in plan.panes if reported.get(a.pane_id) != a.colour.hex]
+    stale += [
+        s.workspace_id
+        for s in plan.spaces
+        if reported.get(s.workspace_id) != s.colour.hex
+    ]
+    return stale
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -215,9 +332,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
     for name, help_text in (
-        ("sync", "colour every agent now (idempotent)"),
+        ("sync", "colour every agent and space now (idempotent)"),
         ("list", "show assigned and reported colours"),
-        ("snippet", "print the config.toml block for the palette"),
+        ("snippet", "print the config.toml blocks for the palette"),
         ("clear", "remove the tokens this plugin set"),
         ("doctor", "check Herdr, the config, and the colours"),
     ):
@@ -231,6 +348,7 @@ def main(argv: list[str] | None = None) -> int:
     # Suppressed defaults mean these are absent unless someone passed them.
     args.socket = getattr(args, "socket", None)
     args.verbose = getattr(args, "verbose", False)
+
     commands = {
         "sync": cmd_sync,
         "list": cmd_list,

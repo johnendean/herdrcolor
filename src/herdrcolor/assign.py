@@ -84,17 +84,79 @@ def resolve(projects: set[str]) -> dict[str, Colour]:
     return assigned
 
 
-def assignments(agents: list[dict[str, Any]]) -> list[Assignment]:
-    """One assignment per agent pane whose directory we can name.
+def workspace_of(pane_id: str) -> str:
+    """The workspace a pane belongs to, which its ID already encodes (`w6:p1`).
 
-    `foreground_cwd` first: an agent that has followed you into a subdirectory
-    is still working on the same project, but if Herdr reports only one of the
-    two, use it rather than skipping the pane.
-
-    Two agents in one project deliberately share a colour: the colour names the
-    project, and pretending otherwise would mean a pane's colour depended on
-    which of its siblings Herdr happened to list first.
+    Herdr gives no other way to ask: `workspace.list` reports no directory and
+    no pane IDs, so this prefix is what lets a space wear the colour of the
+    agents inside it rather than a colour of its own.
     """
+    return pane_id.split(":", 1)[0]
+
+
+@dataclass(frozen=True)
+class SpaceAssignment:
+    workspace_id: str
+    label: str  # the text the spaces panel shows, and its own colour key
+    colour: Colour
+
+
+@dataclass(frozen=True)
+class Plan:
+    panes: list[Assignment]
+    spaces: list[SpaceAssignment]
+
+
+def plan(
+    agents: list[dict[str, Any]], workspaces: list[dict[str, Any]] | None = None
+) -> Plan:
+    """Colours for both halves of the sidebar, resolved together.
+
+    One resolution for the whole sidebar, not one per panel: a space and the
+    agents inside it have to agree, and two panels resolving collisions
+    separately would eventually disagree.
+
+    A space with agents in it takes their colour -- that agreement is the whole
+    point of colouring the spaces panel. A space without agents falls back to
+    hashing its label, because Herdr reports no directory for a workspace. A
+    label is what the user renamed it to, so renaming a space can change its
+    colour; the directory would have been the better key if there were one.
+    """
+    named = _named_panes(agents)
+    with_agents = {workspace_of(pane_id) for pane_id, _ in named}
+
+    spaces = [
+        space
+        for space in (workspaces or [])
+        if space.get("workspace_id") and space.get("label")
+    ]
+    orphan_labels = {
+        space["label"] for space in spaces if space["workspace_id"] not in with_agents
+    }
+
+    colours = resolve({project for _, project in named} | orphan_labels)
+
+    pane_assignments = [
+        Assignment(pane_id, project, colours[project]) for pane_id, project in named
+    ]
+    # Lowest pane ID wins, so a space's colour does not depend on the order
+    # `agent.list` happened to return its panes in.
+    by_workspace: dict[str, Assignment] = {}
+    for assignment in sorted(pane_assignments, key=lambda a: a.pane_id):
+        by_workspace.setdefault(workspace_of(assignment.pane_id), assignment)
+
+    space_assignments = []
+    for space in spaces:
+        inherited = by_workspace.get(space["workspace_id"])
+        colour = inherited.colour if inherited else colours[space["label"]]
+        space_assignments.append(
+            SpaceAssignment(space["workspace_id"], space["label"], colour)
+        )
+
+    return Plan(pane_assignments, space_assignments)
+
+
+def _named_panes(agents: list[dict[str, Any]]) -> list[tuple[str, str]]:
     named: list[tuple[str, str]] = []
     for agent in agents:
         pane_id = agent.get("pane_id")
@@ -106,23 +168,38 @@ def assignments(agents: list[dict[str, Any]]) -> list[Assignment]:
         if not project:
             continue
         named.append((pane_id, project))
-
-    colours = resolve({project for _, project in named})
-    return [
-        Assignment(pane_id, project, colours[project]) for pane_id, project in named
-    ]
+    return named
 
 
-def tokens_for(assignment: Assignment) -> dict[str, str | None]:
-    """The full token set for one pane: the filled slot, the empty ones, the hex.
+def assignments(agents: list[dict[str, Any]]) -> list[Assignment]:
+    """One assignment per agent pane whose directory we can name.
+
+    `foreground_cwd` first: an agent that has followed you into a subdirectory
+    is still working on the same project, but if Herdr reports only one of the
+    two, use it rather than skipping the pane.
+
+    Two agents in one project deliberately share a colour: the colour names the
+    project, and pretending otherwise would mean a pane's colour depended on
+    which of its siblings Herdr happened to list first.
+    """
+    return plan(agents).panes
+
+
+def tokens_for(assignment: Assignment | SpaceAssignment) -> dict[str, str | None]:
+    """The full token set for one row: the filled slot, the empty ones, the hex.
 
     Every slot appears on every call, because a token this plugin does not
     mention is a token Herdr leaves as it was.
     """
+    text = (
+        assignment.project
+        if isinstance(assignment, Assignment)
+        else assignment.label
+    )
     tokens: dict[str, str | None] = {
         palette.slot_token(slot): None for slot in palette.SLOTS
     }
-    tokens[palette.slot_token(assignment.colour.slot)] = assignment.project
+    tokens[palette.slot_token(assignment.colour.slot)] = text
     tokens[palette.COLOUR_TOKEN] = assignment.colour.hex
     return tokens
 
