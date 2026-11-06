@@ -1,8 +1,9 @@
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-src/*.egg-info/
+# The binary: fetched by bin/fetch.sh or bin/fetch.ps1 at install, or built
+# with `go build` for development. Never committed (docs/adr/0001).
+/bin/herdrcolor
+/bin/herdrcolor.exe
+/bin/*.download*
+/dist/
 
 # Session notes, not documentation of the tool: kept local.
 RECAP.md

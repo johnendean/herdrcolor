@@ -1,41 +1,44 @@
-REPO   := $(shell pwd)
-PYTHON := $(REPO)/.venv/bin/python
-HERDRCOLOR := $(REPO)/bin/herdrcolor
+REPO := $(shell pwd)
+EXE  := $(if $(filter Windows_NT,$(OS)),.exe,)
+BIN  := $(REPO)/bin/herdrcolor$(EXE)
 
-.PHONY: help venv test sync list snippet doctor link unlink
+.PHONY: help build test sync list snippet doctor link unlink release
 
 help:
-	@echo "make venv      create .venv (only needed to run the tests)"
+	@echo "make build     build bin/herdrcolor for this machine (needs Go)"
 	@echo "make test      run the test suite (no running Herdr needed)"
 	@echo "make sync      colour every agent now"
 	@echo "make list      show assigned and reported colours"
-	@echo "make snippet   print the config.toml block for the palette"
+	@echo "make snippet   print the sidebar config sections"
 	@echo "make doctor    check Herdr, the sidebar config, and the colours"
-	@echo "make link      link this checkout into Herdr as a plugin"
+	@echo "make link      build, then link this checkout into Herdr"
 	@echo "make unlink    remove it again"
+	@echo "make release   build every target and rewrite checksums.txt"
 
-venv:
-	python3 -m venv .venv
-	$(REPO)/.venv/bin/pip install -q --upgrade pip
-	$(REPO)/.venv/bin/pip install -q -e '.[dev]'
+build:
+	go build -o $(BIN) ./cmd/herdrcolor
 
 test:
-	$(PYTHON) -m pytest -q
+	go vet ./...
+	go test ./...
 
-sync:
-	$(HERDRCOLOR) sync --verbose
+sync: build
+	$(BIN) sync --verbose
 
-list:
-	$(HERDRCOLOR) list
+list: build
+	$(BIN) list
 
-snippet:
-	@$(HERDRCOLOR) snippet
+snippet: build
+	@$(BIN) snippet
 
-doctor:
-	-$(HERDRCOLOR) doctor
+doctor: build
+	-$(BIN) doctor
 
-link:
+link: build
 	herdr plugin link $(REPO)
 
 unlink:
 	herdr plugin unlink herdrcolor
+
+release:
+	go run ./tools/release

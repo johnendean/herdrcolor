@@ -1,26 +1,37 @@
 id = "herdrcolor"
 name = "herdrcolor"
-version = "0.1.0"
+# Also the release tag the install fetches (v0.2.0), and herdrcolor's own
+# version: a test holds the binary to it.
+version = "0.2.0"
 min_herdr_version = "0.9.0"
 description = "Give each Herdr agent its own colour in the sidebar"
-platforms = ["macos", "linux"]
+platforms = ["macos", "linux", "windows"]
 
-# Nothing to compile -- no third-party dependencies -- so install just colours
-# whatever is already running. Startup hooks do not fire until Herdr next
-# starts, and waiting until then to show anything would look like a broken
-# install.
+# Install fetches the release binary for this platform and checks it against
+# checksums.txt at this commit. Build commands get no socket, so colouring
+# waits for the startup hook. A checkout with a binary of its own skips the
+# download. See docs/adr/0001.
 [[build]]
-command = ["./bin/herdrcolor", "sync"]
+platforms = ["macos", "linux"]
+command = ["sh", "./bin/fetch.sh"]
+
+[[build]]
+platforms = ["windows"]
+command = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "bin/fetch.ps1"]
+
+# Every runtime command below is one argv for every platform. The binary is
+# bin/herdrcolor.exe on Windows, and Herdr there resolves the extensionless
+# path to it (checked against Herdr 0.9.5). Per-platform duplicates are not an
+# option: Herdr rejects two actions with the same id even when their
+# platforms differ.
 
 # Reported metadata does not survive a server restart, so every start re-reports
-# it. One shot, no daemon: `sync` asks Herdr what exists, reports, and exits.
+# it and keeps the managed config block current. One shot, no daemon.
 [[startup]]
 command = ["./bin/herdrcolor", "sync"]
 
-# The whole event-driven half of the plugin. A new agent is the only thing that
-# can need a colour it does not have, and `sync` re-reports every pane rather
-# than just the new one -- which costs one request per agent and means a missed
-# or replayed event cannot leave anything stale.
+# A new agent is the only thing that can need a colour it does not have, and
+# `sync` re-reports every row, so a missed or replayed event leaves nothing stale.
 [[events]]
 on = "pane.agent_detected"
 command = ["./bin/herdrcolor", "sync"]
